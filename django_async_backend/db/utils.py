@@ -40,7 +40,16 @@ class _TaskAwareLocal:
     so concurrent tasks on the same event loop thread each get their
     own database connections.
 
-    See: https://github.com/Arfey/django-async-backend/issues/11
+    Django's default Local (from asgiref) with thread_critical=True stores
+    connections per-thread. Since all async tasks share one event loop
+    thread, they share one connection — corrupting transaction state
+    (in_atomic_block, savepoint_ids, needs_rollback) under concurrency.
+
+    This class is a drop-in replacement: BaseConnectionHandler accesses
+    self._connections via getattr/setattr/delattr, all of which are
+    delegated to the per-task namespace. Connection aliases (e.g.
+    "default") are stored as attributes; internal state uses the "_"
+    prefix convention to avoid collision.
     """
 
     def __init__(self):
@@ -56,12 +65,13 @@ class _TaskAwareLocal:
             task = None
 
         if task is None:
-            # Sync context: use thread-local (matches Django behavior).
             return self._thread_local
 
-        # Async context: each task gets its own namespace.
-        # ContextVar.set() only affects the current context, so child
-        # tasks created with asyncio.create_task() start fresh.
+        # Each task gets its own namespace. When asyncio.create_task()
+        # copies the parent context, the child inherits a reference to
+        # the parent's _TaskNamespace. The identity check detects this
+        # and creates a fresh namespace for the child, so connections
+        # are never shared across tasks.
         storage = self._task_connections.get()
         if storage is None or storage._task_ref is not task:
             storage = _TaskNamespace(task)
@@ -98,9 +108,7 @@ class AsyncConnectionHandler(BaseAsyncConnectionHandler):
     settings_name = ConnectionHandler.settings_name
 
     def __init__(self, settings=None):
-        self._settings = settings
-        # Replace Django's Local with task-aware storage so each
-        # async task gets its own database connections.
+        super().__init__(settings)
         self._connections = _TaskAwareLocal()
 
     def configure_settings(self, databases):
