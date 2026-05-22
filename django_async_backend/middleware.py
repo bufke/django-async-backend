@@ -69,12 +69,20 @@ def acquire_pool_connections(get_response):
             ...
         ]
 
-    Caveat: pre-acquiring means every request — including DB-free
-    endpoints like /_health/ — checks out a pool connection for its
-    duration. Under pool saturation, non-DB endpoints will wait for a
-    connection. If that's not acceptable, opt in selectively via a
-    sub-route middleware, or stay on `close_async_connections` and
-    accept the wedge risk.
+    Caveats:
+
+    - Pre-acquires for EVERY request — including DB-free endpoints like
+      /_health/. Under pool saturation, non-DB endpoints will wait for
+      a connection. If that's not acceptable, stay on
+      `close_async_connections` or opt in selectively via a sub-route
+      middleware.
+    - Pre-acquires only for the `default` alias. If your project uses
+      multiple database aliases under load, additional protection
+      (per-alias middleware, or extending this helper) is needed.
+    - Wrappers created inside `_independent_connection()` (gather +
+      parallel queries) still lazy-connect from their gather child
+      tasks and remain vulnerable to the same leak. Workloads heavy on
+      `asyncio.gather + _independent_connection` need further work.
     """
 
     async def middleware(request):
@@ -85,10 +93,15 @@ def acquire_pool_connections(get_response):
                 return await get_response(request)
             finally:
                 await asyncio.shield(async_connections.close_all())
-        # Pool configured: pre-acquire at request entry.
-        await wrapper.pool.open()
-        conn = await wrapper.pool.getconn()
+            return
+        # Pool configured: pre-acquire at request entry, with a
+        # `conn = None` sentinel so the outer finally can safely
+        # putconn() any conn we obtained — even if cancellation
+        # arrived at the getconn() await itself.
+        conn = None
         try:
+            await wrapper.pool.open()
+            conn = await wrapper.pool.getconn()
             wrapper.connection = conn
             await wrapper.set_autocommit(
                 wrapper.settings_dict["AUTOCOMMIT"]
@@ -100,14 +113,18 @@ def acquire_pool_connections(get_response):
                 # Clear `wrapper.connection` BEFORE close_all so
                 # close_all treats this wrapper as already-closed and
                 # skips its putconn() — we'll do it ourselves below
-                # via the cm finally. Other wrappers (alias != default,
-                # or wrappers created inside _independent_connection)
-                # still get their normal close path.
+                # via the outer finally. Other wrappers (alias !=
+                # default, or wrappers created inside
+                # _independent_connection) still get their normal close
+                # path.
                 wrapper.connection = None
                 await asyncio.shield(async_connections.close_all())
         finally:
-            # putconn ALWAYS runs here, even on cancellation. Shielded
-            # so a re-cancel at this await can't skip it.
-            await asyncio.shield(wrapper.pool.putconn(conn))
+            # Always clear our reference and putconn() the conn if we
+            # got one. Shielded so a re-cancel at the putconn await
+            # can't skip it.
+            wrapper.connection = None
+            if conn is not None:
+                await asyncio.shield(wrapper.pool.putconn(conn))
 
     return middleware
