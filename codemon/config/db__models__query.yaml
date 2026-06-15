@@ -5,6 +5,7 @@ module:
     - "from django_async_backend.db import async_connections"
     - "from django_async_backend.db.models import sql as async_sql"
     - "from django_async_backend.db.transaction import async_mark_for_rollback_on_error"
+    - "from django_async_backend.db.transaction import async_atomic"
 
   functions:
     prefetch_related_objects:
@@ -23,7 +24,7 @@ module:
 
         - target:
             name: bulk_update
-          remove: true
+          rename: abulk_update
 
         - target:
             name: get_or_create
@@ -262,9 +263,31 @@ module:
           remove: true
 
         bulk_update:
-          # to_async: true
-          # rename: abulk_update
-          remove: true
+          to_async: true
+          rename: abulk_update
+          context_managers:
+            - to_async: true
+          calls:
+            # GUARD (must be first): leaves the set's `.update()` on the
+            # `for parent in opts.all_parents` loop untouched. Without this,
+            # the generic `attr: update` rewrite below would corrupt it into
+            # `await all_pk_fields.aupdate(...)`. The per-node calls loop tries
+            # configs in order and breaks on first match, so this protects the
+            # set update before the generic match can reach it.
+            - func:
+                value: all_pk_fields
+                attr: update
+            # The DB write: queryset.filter(pk__in=pks).update(**update_kwargs)
+            - func:
+                attr: update
+              rename:
+                func:
+                  attr: aupdate
+              to_await: true
+            - func:
+                value: transaction
+                attr: atomic
+              replace_raw: 'async_atomic(using=self.db, savepoint=False)'
 
         get_or_create:
           # to_async: true
