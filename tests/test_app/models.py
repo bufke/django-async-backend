@@ -81,6 +81,23 @@ class ParentModel(models.Model):
         db_table = "parent_model"
 
 
+class OrderedItemModel(models.Model):
+    """order_with_respect_to model used to exercise the abulk_create guard."""
+
+    container = models.ForeignKey(
+        ParentModel,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+
+    async_object = AsyncManager()
+
+    class Meta:
+        db_table = "ordered_item"
+        order_with_respect_to = "container"
+
+
 class ChildModel(ParentModel):
     """Multi-table inheritance child used to exercise related updates."""
 

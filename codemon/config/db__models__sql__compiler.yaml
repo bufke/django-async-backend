@@ -74,14 +74,8 @@ module:
       methods:
         execute_sql:
           to_async: true
-          # pre_sql_setup() (called by as_sql()) is still sync. For a plain
-          # single-table update it returns early without running SQL, so the
-          # async path is safe. But when the query touches a parent model
-          # (multi-table inheritance), pre_sql_setup() runs a pre-select to
-          # collect ids -- and it does so through Django's *sync* connection
-          # registry, outside async_connections and the async transaction.
-          # Reject that case loudly instead of silently using the wrong
-          # connection until pre_sql_setup() is made async.
+          # related_updates (MTI) makes pre_sql_setup() run a sync pre-select
+          # on Django's sync connection; reject until async.
           add_raw_top:
             - |
                 if self.query.related_updates:
@@ -102,6 +96,16 @@ module:
               to_async: true
           calls:
             - func:
+                attr: cursor
+              to_await: true
+            - func:
+                value: cursor
+                attr: execute
+              to_await: true
+            - func:
+                attr: fetch_returned_rows
+              to_await: true
+            - func:
                 attr: execute_sql
               to_await: true
 
@@ -114,6 +118,12 @@ module:
               to_async: true
           calls:
             - func:
+                attr: cursor
+              to_await: true
+            - func:
                 value: cursor
                 attr: execute
+              to_await: true
+            - func:
+                attr: fetch_returned_rows
               to_await: true

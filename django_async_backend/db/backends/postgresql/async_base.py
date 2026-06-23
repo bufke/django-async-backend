@@ -45,6 +45,13 @@ class AsyncDatabaseOperations(DatabaseWrapper.ops_class):
     async def compose_sql(self, sql, params):
         return await async_mogrify(sql, params, self.connection)
 
+    async def fetch_returned_rows(self, cursor, returning_params):
+        """
+        Async variant of the sync helper: read the rows produced by a DML
+        query with a RETURNING clause back from the async cursor.
+        """
+        return await cursor.fetchall()
+
     async def last_executed_query(self, cursor, sql, params):
         if self.connection.features.uses_server_side_binding:
             try:

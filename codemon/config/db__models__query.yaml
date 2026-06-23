@@ -4,6 +4,7 @@ module:
   new_imports:
     - "from django_async_backend.db import async_connections"
     - "from django_async_backend.db.models import sql as async_sql"
+    - "from django_async_backend.db.transaction import async_atomic"
     - "from django_async_backend.db.transaction import async_mark_for_rollback_on_error"
 
   functions:
@@ -39,7 +40,7 @@ module:
 
         - target:
             name: bulk_create
-          remove: true
+          rename: abulk_create
 
         - target:
             name: delete
@@ -257,9 +258,26 @@ module:
           remove: true
 
         bulk_create:
-          # to_async: true
-          # rename: abulk_create
-          remove: true
+          to_async: true
+          rename: abulk_create
+          # _handle_order_with_respect_to() runs a sync ORM query; reject until async.
+          add_raw_top:
+            - |
+                if self.model._meta.order_with_respect_to:
+                    raise NotImplementedError(
+                        "Async bulk_create does not yet support models "
+                        "defined with order_with_respect_to."
+                    )
+          context_managers:
+            - to_async: true
+          calls:
+            - func:
+                value: transaction
+                attr: atomic
+              replace_raw: 'async_atomic(using=self.db, savepoint=False)'
+            - func:
+                attr: _batched_insert
+              to_await: true
 
         bulk_update:
           # to_async: true
@@ -400,7 +418,25 @@ module:
           to_async: true
           calls:
             - func:
+                attr: InsertQuery
+              rename:
+                func:
+                  value: async_sql
+            - func:
                 attr: execute_sql
+              to_await: true
+
+        _batched_insert:
+          to_async: true
+          context_managers:
+            - to_async: true
+          calls:
+            - func:
+                value: transaction
+                attr: atomic
+              replace_raw: 'async_atomic(using=self.db, savepoint=False)'
+            - func:
+                attr: _insert
               to_await: true
 
         __aiter__:

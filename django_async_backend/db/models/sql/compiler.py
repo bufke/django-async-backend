@@ -2078,7 +2078,7 @@ class SQLInsertCompiler(SQLCompiler):
         opts = self.query.get_meta()
         self.returning_fields = returning_fields
         cols = []
-        async with self.connection.cursor() as cursor:
+        async with await self.connection.cursor() as cursor:
             for sql, params in self.as_sql():
                 await cursor.execute(sql, params)
             if not self.returning_fields:
@@ -2091,7 +2091,7 @@ class SQLInsertCompiler(SQLCompiler):
                 self.connection.features.can_return_columns_from_insert
                 and obj_len == 1
             ):
-                rows = self.connection.ops.fetch_returned_rows(
+                rows = await self.connection.ops.fetch_returned_rows(
                     cursor, self.returning_params
                 )
                 cols = [
@@ -2320,10 +2320,10 @@ class SQLUpdateCompiler(SQLCompiler):
             return [()] * row_count
 
         self.returning_fields = returning_fields
-        async with self.connection.cursor() as cursor:
+        async with await self.connection.cursor() as cursor:
             sql, params = self.as_sql()
-            cursor.execute(sql, params)
-            rows = self.connection.ops.fetch_returned_rows(
+            await cursor.execute(sql, params)
+            rows = await self.connection.ops.fetch_returned_rows(
                 cursor, self.returning_params
             )
         opts = self.query.get_meta()
