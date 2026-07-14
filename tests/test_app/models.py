@@ -166,6 +166,21 @@ class GetOrCreateModel(AsyncModelMixin, models.Model):
         db_table = "get_or_create_model"
 
 
+class TagModel(AsyncModelMixin, models.Model):
+    name = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        db_table = "tag_model"
+
+
+class TaggedModel(AsyncModelMixin, models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    tags = models.ManyToManyField(TagModel, related_name="tagged")
+
+    class Meta:
+        db_table = "tagged_model"
+
+
 class GenericFkModel(AsyncModelMixin, models.Model):
     name = models.CharField(max_length=255)
     content_type = models.ForeignKey(

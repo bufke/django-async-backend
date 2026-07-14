@@ -273,6 +273,44 @@ async def main():
     await async_connections[DEFAULT_DB_ALIAS].close()
 ```
 
+### Related managers:
+
+Reverse foreign key and many-to-many accessors can run on the async
+connection through Django's standard [custom reverse manager](https://docs.djangoproject.com/en/stable/topics/db/queries/#using-a-custom-reverse-manager)
+syntax. Passing `manager="async_objects"` builds the related manager from
+`AsyncManager`, so read queries go through `async_connections` — no extra
+setup is required:
+
+```python
+class Author(AsyncModelMixin, models.Model):
+    name = models.CharField(max_length=100)
+
+
+class Book(AsyncModelMixin, models.Model):
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+
+
+async def main():
+    author = await Author.async_objects.aget(name="Andrew")
+
+    books = author.book_set(manager="async_objects")
+    async for book in books.all():
+        ...
+    count = await books.acount()
+    first = await books.filter(name__startswith="Django").afirst()
+```
+
+Only read operations are supported. The write helpers on related managers
+(`acreate`, `aadd`, `aset`, `aremove`, `aclear`, `aget_or_create`, ...) are
+sync implementations wrapped in `sync_to_async` and are **not** supported —
+create or update the related model through its own manager instead
+(e.g. `await Book.async_objects.acreate(author=author)`).
+
+Forward relation attribute access (`book.author`) has no async equivalent;
+an uncached access raises `SynchronousOnlyOperation`. Fetch the related
+object explicitly, e.g. `await Author.async_objects.aget(pk=book.author_id)`.
+Objects fetched through a related manager have the reverse side already
+cached, so `book.author` is safe on results of `author.book_set(...)`.
 
 
 | methods                             | supported | comments |
