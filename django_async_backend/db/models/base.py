@@ -125,9 +125,6 @@ class AsyncModelMixin:
         )
 
     def _async_get_deferred_fields(self):
-        """
-        Return a set containing names of deferred fields for this instance.
-        """
         return {
             f.attname
             for f in self._meta.concrete_fields
