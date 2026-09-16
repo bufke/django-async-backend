@@ -1,4 +1,4 @@
-# This file was generated automatically. Do not modify it manually. (based on django 6.0)
+# This file was generated automatically. Do not modify it manually. (based on django 6.1)
 from collections import (
     Counter,
     defaultdict,
@@ -19,7 +19,9 @@ from django.db.models import (
     query_utils,
     signals,
 )
+from django.db.models.deletion import SKIP_COLLECTION as _SYNC_SKIP_COLLECTION
 from django.db.models.deletion import (
+    DatabaseOnDelete,
     ProtectedError,
     RestrictedError,
 )
@@ -99,6 +101,15 @@ async def _DO_NOTHING(collector, field, sub_objs, using):
     pass
 
 
+_DB_CASCADE = DatabaseOnDelete("CASCADE", "DB_CASCADE", _CASCADE)
+_DB_SET_DEFAULT = DatabaseOnDelete("SET DEFAULT", "DB_SET_DEFAULT")
+_DB_SET_NULL = DatabaseOnDelete("SET NULL", "DB_SET_NULL")
+
+_SKIP_COLLECTION = frozenset(
+    [_DO_NOTHING, _DB_CASCADE, _DB_SET_DEFAULT, _DB_SET_NULL]
+)
+
+
 def _get_candidate_relations_to_delete(opts):
     # The candidate relations are the ones that come from N-1 and 1-1
     # relations. N-N  (i.e., many-to-many) relations aren't candidates for
@@ -113,10 +124,12 @@ def _get_candidate_relations_to_delete(opts):
 
 
 class Collector:
-    def __init__(self, using, origin=None):
+    def __init__(self, using, origin=None, force_collection=False):
         self.using = using
         # A Model or QuerySet object.
         self.origin = origin
+        # Force collecting objects for deletion on the Python-level.
+        self.force_collection = force_collection
         # Initially, {model: {instances}}, later values become lists.
         self.data = defaultdict(set)
         # {(field, value): [instances, …]}
@@ -135,13 +148,6 @@ class Collector:
         self.dependencies = defaultdict(set)  # {model: {models}}
 
     def add(self, objs, source=None, nullable=False, reverse_dependency=False):
-        """
-        Add 'objs' to the collection of objects to be deleted. If the call is
-        the result of a cascade, 'source' should be the model that caused it,
-        and 'nullable' should be set to True if the relation can be null.
-
-        Return a list of all objects that were not already collected.
-        """
         if not objs:
             return []
         new_objs = []
@@ -169,10 +175,6 @@ class Collector:
         self.data.setdefault(dependency, self.data.default_factory())
 
     def add_field_update(self, field, value, objs):
-        """
-        Schedule a field update. 'objs' must be a homogeneous iterable
-        collection of model instances (e.g. a QuerySet).
-        """
         self.field_updates[field, value].append(objs)
 
     def add_restricted_objects(self, field, objs):
@@ -209,16 +211,8 @@ class Collector:
         ) or signals.post_delete.has_listeners(model)
 
     def can_fast_delete(self, objs, from_field=None):
-        """
-        Determine if the objects in the given queryset-like or single object
-        can be fast-deleted. This can be done if there are no cascades, no
-        parents and no signal listeners for the object class.
-
-        The 'from_field' tells where we are coming from - we need this to
-        determine if the objects are in fact to be deleted. Allow also
-        skipping parent -> child -> parent chain preventing fast delete of
-        the child.
-        """
+        if self.force_collection:
+            return False
         if (
             from_field
             and from_field.remote_field.on_delete is not _SYNC_CASCADE
@@ -243,7 +237,7 @@ class Collector:
             and
             # Foreign keys pointing to this model.
             all(
-                related.field.remote_field.on_delete is _SYNC_DO_NOTHING
+                related.field.remote_field.on_delete in _SYNC_SKIP_COLLECTION
                 for related in _get_candidate_relations_to_delete(opts)
             )
             and (
@@ -256,9 +250,6 @@ class Collector:
         )
 
     def get_del_batches(self, objs, fields):
-        """
-        Return the objs in suitably sized batches for the used connection.
-        """
         conn_batch_size = max(
             async_connections[self.using].ops.bulk_batch_size(fields, objs), 1
         )
@@ -281,29 +272,6 @@ class Collector:
         keep_parents=False,
         fail_on_restricted=True,
     ):
-        """
-        Add 'objs' to the collection of objects to be deleted as well as all
-        parent instances. 'objs' must be a homogeneous iterable collection of
-        model instances (e.g. a QuerySet). If 'collect_related' is True,
-        related objects will be handled by their respective on_delete handler.
-
-        If the call is the result of a cascade, 'source' should be the model
-        that caused it and 'nullable' should be set to True, if the relation
-        can be null.
-
-        If 'reverse_dependency' is True, 'source' will be deleted before the
-        current model, rather than after. (Needed for cascading to parent
-        models, the one case in which the cascade follows the forwards
-        direction of an FK rather than the reverse direction.)
-
-        If 'keep_parents' is True, data of parent model's will be not deleted.
-
-        If 'fail_on_restricted' is False, error won't be raised even if it's
-        prohibited to delete such objects due to RESTRICT, that defers
-        restricted object checking in recursive calls where the top-level call
-        may need to collect more objects to determine whether restricted ones
-        can be deleted.
-        """
         if self.can_fast_delete(objs):
             self.fast_deletes.append(objs)
             return
@@ -352,8 +320,15 @@ class Collector:
                 continue
             field = related.field
             on_delete = _resolve_async_on_delete(field.remote_field.on_delete)
-            if on_delete == _DO_NOTHING:
-                continue
+            if on_delete in _SKIP_COLLECTION:
+                if self.force_collection and (
+                    forced_on_delete := getattr(
+                        on_delete, "forced_collector", None
+                    )
+                ):
+                    on_delete = forced_on_delete
+                else:
+                    continue
             related_model = related.related_model
             if self.can_fast_delete(related_model, from_field=field):
                 model_fast_deletes[related_model].append(field)
@@ -459,9 +434,6 @@ class Collector:
                     )
 
     def related_objects(self, related_model, related_fields, objs):
-        """
-        Get a QuerySet of the related model to objs via related fields.
-        """
         predicate = query_utils.Q.create(
             [
                 (f"{related_field.name}__in", objs)
@@ -598,9 +570,6 @@ class Collector:
 _SYNC_CASCADE = django_deletion.CASCADE
 
 
-_SYNC_DO_NOTHING = django_deletion.DO_NOTHING
-
-
 _SYNC_TO_ASYNC_ON_DELETE = {
     django_deletion.CASCADE: _CASCADE,
     django_deletion.PROTECT: _PROTECT,
@@ -608,6 +577,9 @@ _SYNC_TO_ASYNC_ON_DELETE = {
     django_deletion.SET_NULL: _SET_NULL,
     django_deletion.SET_DEFAULT: _SET_DEFAULT,
     django_deletion.DO_NOTHING: _DO_NOTHING,
+    django_deletion.DB_CASCADE: _DB_CASCADE,
+    django_deletion.DB_SET_DEFAULT: _DB_SET_DEFAULT,
+    django_deletion.DB_SET_NULL: _DB_SET_NULL,
 }
 
 
@@ -654,16 +626,6 @@ async def _abulk_related_objects(field, objs, using):
 
 
 def _parent_chain_fields(opts):
-    """Field names that must stay loaded on a multi-table inheritance
-    child so its parent instances can be built from data already in
-    memory.
-
-    ``collect()`` reads parent instances with ``getattr(obj, ptr.name)``.
-    Django's ``ForwardOneToOneDescriptor`` answers that from the child's
-    own columns, but only while none of the parent's concrete fields is
-    deferred -- otherwise it falls back to a query per object, which is
-    synchronous and blows up in an async context.
-    """
     return {
         field.name
         for ptr in opts.concrete_model._meta.parents.values()

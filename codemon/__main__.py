@@ -24,7 +24,7 @@ from .utils import (
     write_ast,
 )
 
-DJANGO_VERSION = "6.0"
+DJANGO_VERSION = "6.1"
 
 
 def attr_matcher(config: Attr) -> m.BaseMatcherNode:
@@ -155,6 +155,17 @@ def apply_boolean_operations(
     return updated_node
 
 
+def assign_value_transformer(attrs: list[Attr]) -> cst.CSTTransformer:
+    class AssignValueTransformed(m.MatcherDecoratableTransformer):
+        @m.leave(m.Name())
+        def rename_references(
+            self, original_node: cst.Name, updated_node: cst.Name
+        ) -> cst.BaseExpression:
+            return apply_attrs(original_node, updated_node, attrs)
+
+    return AssignValueTransformed()
+
+
 def assignment_transformer(config: Assign) -> cst.CSTTransformer:
     class AssignmentTransformed(m.MatcherDecoratableTransformer):
         @m.leave(m.Assign())
@@ -166,7 +177,7 @@ def assignment_transformer(config: Assign) -> cst.CSTTransformer:
 
             matcher = attr_matcher(config.target)
 
-            return updated_node.with_changes(
+            updated_node = updated_node.with_changes(
                 targets=[
                     (
                         target.with_changes(
@@ -178,6 +189,15 @@ def assignment_transformer(config: Assign) -> cst.CSTTransformer:
                     for target in updated_node.targets
                 ]
             )
+
+            if config.attrs:
+                updated_node = updated_node.with_changes(
+                    value=updated_node.value.visit(
+                        assign_value_transformer(config.attrs)
+                    )
+                )
+
+            return updated_node
 
     return AssignmentTransformed()
 
@@ -474,13 +494,28 @@ def add_raw_bottom_to_function(updated_node, add_raw_top):
     )
 
 
+def returns_expression(node: cst.Return, source: str) -> bool:
+    """Whether ``node`` returns the expression written as ``source``."""
+    if node.value is None:
+        return False
+
+    expected = cst.parse_module(dedent(source)).body[0].body[0].value
+
+    return node.value.deep_equals(expected)
+
+
 def apply_return_blocks(original_node, updated_node, return_blocks):
     for return_config in return_blocks:
-        if m.matches(original_node, m.Return()):
-            updated_node = updated_node.visit(
-                return_transformer(return_config)
-            )
-            break
+        if not m.matches(original_node, m.Return()):
+            continue
+
+        if return_config.match_raw and not returns_expression(
+            original_node, return_config.match_raw
+        ):
+            continue
+
+        updated_node = updated_node.visit(return_transformer(return_config))
+        break
     return updated_node
 
 
@@ -539,7 +574,7 @@ def function_transformer(name: str, config: Function) -> cst.CSTTransformer:
 
         if config.to_async:
 
-            @m.leave(m.FunctionDef())
+            @m.leave(m.FunctionDef(name=m.Name(name)))
             def to_async(
                 self,
                 original_node: cst.FunctionDef,
@@ -695,7 +730,7 @@ def method_transformer(name: str, config: Method) -> cst.CSTTransformer:
 
         if config.to_async:
 
-            @m.leave(m.FunctionDef())
+            @m.leave(m.FunctionDef(name=m.Name(name)))
             def to_async(
                 self,
                 original_node: cst.FunctionDef,
@@ -949,6 +984,86 @@ def class_transformer(name: str, config: Class) -> cst.CSTTransformer:
     return ClassTransformed()
 
 
+DOCSTRING_LINE = m.SimpleStatementLine(
+    body=[m.Expr(value=m.SimpleString()), m.ZeroOrMore()]
+)
+
+STATEMENT = (
+    m.SimpleStatementLine()
+    | m.ClassDef()
+    | m.For()
+    | m.FunctionDef()
+    | m.If()
+    | m.Match()
+    | m.Try()
+    | m.TryStar()
+    | m.While()
+    | m.With()
+)
+
+
+HAS_DOCSTRING = m.FunctionDef(
+    body=m.IndentedBlock(body=[DOCSTRING_LINE, m.ZeroOrMore()])
+) | m.ClassDef(body=m.IndentedBlock(body=[DOCSTRING_LINE, m.ZeroOrMore()]))
+
+
+def docstring_transformer() -> cst.CSTTransformer:
+    """Drop every docstring."""
+
+    def inherit_leading_lines(body: list, docstring) -> list:
+        if not body or not m.matches(body[0], STATEMENT):
+            return body
+
+        return [
+            body[0].with_changes(
+                leading_lines=[
+                    *docstring.leading_lines,
+                    *body[0].leading_lines,
+                ]
+            ),
+            *body[1:],
+        ]
+
+    class DocstringRemover(m.MatcherDecoratableTransformer):
+        def _strip(self, updated_node):
+            if not m.matches(updated_node, HAS_DOCSTRING):
+                return updated_node
+
+            block = updated_node.body
+            body = inherit_leading_lines(list(block.body[1:]), block.body[0])
+
+            if not body:
+                body = [cst.SimpleStatementLine(body=[cst.Pass()])]
+
+            return updated_node.with_changes(
+                body=block.with_changes(body=body)
+            )
+
+        def leave_FunctionDef(
+            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
+        ) -> cst.FunctionDef:
+            return self._strip(updated_node)
+
+        def leave_ClassDef(
+            self, original_node: cst.ClassDef, updated_node: cst.ClassDef
+        ) -> cst.ClassDef:
+            return self._strip(updated_node)
+
+        def leave_Module(
+            self, original_node: cst.Module, updated_node: cst.Module
+        ) -> cst.Module:
+            body = list(updated_node.body)
+
+            if not body or not m.matches(body[0], DOCSTRING_LINE):
+                return updated_node
+
+            return updated_node.with_changes(
+                body=inherit_leading_lines(body[1:], body[0])
+            )
+
+    return DocstringRemover()
+
+
 def module_transformer(config: Module) -> cst.CSTTransformer:
     class ModuleTransformed(m.MatcherDecoratableTransformer):
 
@@ -1125,5 +1240,6 @@ if __name__ == "__main__":
         ast = get_ast(config=config)
 
         ast = ast.visit(module_transformer(config.module))
+        ast = ast.visit(docstring_transformer())
 
         write_ast(ast, config=config, version=DJANGO_VERSION)

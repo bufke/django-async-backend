@@ -16,6 +16,12 @@ module:
       remove: true
     - name: Collector
       remove: true
+    - name: FETCH_ONE
+      remove: true
+    - name: DO_NOTHING
+      remove: true
+    - name: DatabaseOnDelete
+      remove: true
 
   assigns:
     - target:
@@ -53,6 +59,9 @@ module:
       remove: true
 
     ModelStateFieldsCacheDescriptor:
+      remove: true
+
+    ModelStateFetchModeDescriptor:
       remove: true
 
     ModelState:
@@ -521,13 +530,11 @@ module:
         _check_constraints:
           remove: true
 
+        _check_related_fields:
+          remove: true
+
 # Code review notes
 #
-# - The mixin shouldn't call external methods. Copy every private method it needs
-# into the mixin and add an _async prefix. We want 100% coverage so we can be
-# sure we haven't missed any sync operation (except _meta, _state, NotUpdated).
 # - 100% coverage.
-# - All methods should be private except async_objects, async_save,
-# async_delete and async_refresh_from_db.
 # - Don't use mocks in tests (if not accepted in test comment).
 # - Don't test private methods.

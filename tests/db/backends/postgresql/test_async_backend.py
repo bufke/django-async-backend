@@ -332,7 +332,7 @@ class Tests(AsyncioTestCase):
         # get_new_connection() is set_isolation_level(), and it only
         # runs when "isolation_level" is set in OPTIONS. We block it,
         # cancel the connecting task there, then close() the wrapper
-        # like the ASGI middleware would. The fix assigns
+        # like the request_finished handler would. The fix assigns
         # self.connection BEFORE that await so close()/_close() can
         # putconn(); otherwise the conn is stranded in the pool's
         # in-use accounting and the pool's full capacity becomes
@@ -374,7 +374,7 @@ class Tests(AsyncioTestCase):
             except asyncio.CancelledError:
                 pass
 
-            # Model the ASGI middleware: shielded close() of the
+            # Model the request_finished handler: close() of the
             # wrapper. With the fix, self.connection was set before
             # the cancellation point, so _close() runs putconn().
             await new_connection.close()
@@ -532,13 +532,17 @@ class Tests(AsyncioTestCase):
             psycopg_version,
         )
 
+        self.addCleanup(psycopg_version.cache_clear)
+
         with mock.patch.object(
             Database, "__version__", "4.2.1 (dt dec pq3 ext lo64)"
         ):
+            psycopg_version.cache_clear()
             self.assertEqual(psycopg_version(), (4, 2, 1))
         with mock.patch.object(
             Database, "__version__", "4.2b0.dev1 (dt dec pq3 ext lo64)"
         ):
+            psycopg_version.cache_clear()
             self.assertEqual(psycopg_version(), (4, 2))
 
     @override_settings(DEBUG=True)

@@ -14,6 +14,10 @@ itself, so queries are issued on a real asyncio connection through
 {pypi}`psycopg` 3, with async transactions, async cursors and optional
 connection pooling.
 
+The project is **production ready**: the API is stable, and each release is
+pinned to the Django feature release it was generated against, so upgrades stay
+predictable.
+
 ```{warning}
 **Run this under ASGI.** django-async-backend is developed for ASGI, and that
 is the only mode it is supported in. Under WSGI — including the Django
@@ -28,7 +32,7 @@ reliably across them. Connection pooling in particular is not supported there.
   - [Connection handler](connections.md#connection-handler)
   - [Cursors](connections.md#cursors)
   - [Connection pooling](connections.md#connection-pooling)
-  - [Middleware](setup.md#middleware)
+  - [Request signals](setup.md#request-signals)
 - ORM
   - [`AsyncModelMixin`](orm.md#asyncmodelmixin) — `async_save()` / `async_delete()`
   - [Managers](orm.md#managers) — the `async_objects` manager
@@ -42,7 +46,7 @@ reliably across them. Connection pooling in particular is not supported there.
   - [`AsyncioTransactionTestCase`](testing.md#asynciotransactiontestcase)
 - Implementation details
   - [Concurrency and parallelism](concurrency.md)
-  - [DEP 0009](concurrency.md#dep-0009)
+  - [Running queries in parallel](concurrency.md#running-queries-in-parallel)
 
 ## Installation
 
@@ -58,9 +62,19 @@ If you use connection pooling, add the `pool` extra as well:
 pip install django-async-backend[binary,pool]
 ```
 
-The package tracks Django's major and minor version — for example `6.0.x`
-matches Django `6.0` — because a large part of the ORM layer is generated from
-Django's own source. See [Code generation](contribute.md#code-generation).
+The package tracks Django's major and minor version, so the release you install
+is pinned to the Django feature release it was generated against.
+
+| django-async-backend | Django  |
+| -------------------- | ------- |
+| `6.1.3`              | `6.1.0` |
+
+Part of the ORM layer is generated from Django's own source *ahead of time*:
+the generated modules are committed to git and shipped in the wheel, so nothing
+is downloaded or rewritten at install time and nothing is patched at runtime. A
+Django feature release therefore gets a matching django-async-backend feature
+release rather than a loosened version range. See
+[Code generation](contribute.md#code-generation).
 
 ## Getting started
 
@@ -80,12 +94,6 @@ DATABASES = {
 INSTALLED_APPS = [
     # ...
     "django_async_backend",
-]
-
-# Required under ASGI so connections are released each request.
-MIDDLEWARE = [
-    "django_async_backend.middleware.close_async_connections",
-    # ...
 ]
 ```
 

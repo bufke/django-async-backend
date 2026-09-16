@@ -8,9 +8,42 @@
 
 Async Django ORM and PostgreSQL database backend.
 
+Django's `a`-prefixed ORM methods (`aget`, `acreate`, …) are thin
+`sync_to_async` wrappers: the query still runs on a threadpool, on a
+synchronous connection. **django-async-backend** replaces the database layer
+itself, so queries are issued on a real asyncio connection through
+[psycopg](https://www.psycopg.org/psycopg3/) 3, with async transactions, async
+cursors and optional connection pooling — no thread emulation.
+
+The project is **production ready**: the API is stable, and each release is
+pinned to the Django feature release it was generated against, so upgrades stay
+predictable.
+
 📖 **[Read the documentation](https://django-async-backend.readthedocs.io/en/latest/)**
 
 ---
+
+## Compatibility
+
+The package tracks Django's major and minor version, so the release you install
+is pinned to the Django feature release it was generated against.
+
+| django-async-backend | Django  |
+| -------------------- | ------- |
+| `6.1.3`              | `6.1.0` |
+
+Part of the ORM layer is generated from Django's own source, so a Django feature
+release gets a matching django-async-backend feature release rather than a
+loosened version range. Patch releases within a line are ordinary bugfix
+releases and are safe to upgrade to.
+
+> [!IMPORTANT]
+> **Run this under ASGI.** django-async-backend is developed for ASGI, and that
+> is the only mode it is supported in. Under WSGI — including the Django
+> development server — it behaves inconsistently, because WSGI creates a new
+> event loop for each request and the async connection state cannot be managed
+> reliably across them. Connection pooling in particular is not supported
+> there.
 
 ## Installation
 
@@ -44,12 +77,6 @@ DATABASES = {
 INSTALLED_APPS = [
     ...
     "django_async_backend",
-]
-
-# Required under ASGI so connections are released each request.
-MIDDLEWARE = [
-    "django_async_backend.middleware.close_async_connections",
-    ...
 ]
 ```
 
@@ -102,10 +129,17 @@ async with await connection.cursor() as cursor:
 ```
 
 > [!WARNING]
-> **Async does not mean parallel.** Within one async context, all ORM and
-> cursor calls share a single connection per database alias, so queries are
-> serialized even under `asyncio.gather()`. This mirrors Django's
-> [DEP 0009](https://github.com/django/deps/blob/main/accepted/0009-async.rst).
+> **Async does not mean parallel.** A task gets one connection per database
+> alias, and every ORM and cursor call in that task takes turns on it — so
+> awaiting several queries in a row does not make them run concurrently.
+>
+> The connection is owned by the task that first used it, so you cannot fan out
+> onto it either: using it from another task — `asyncio.create_task()`,
+> `asyncio.gather()`, `asyncio.TaskGroup` — raises `RuntimeError`. Wrapping the
+> fan-out in a single `async_atomic()` block does **not** make it safe. To run
+> queries in parallel, give each task its own connection with
+> `async_new_connection` — sparingly, since each call opens a real connection
+> and a wide fan-out can exhaust the server's limit.
 
 ## Supported methods
 
@@ -141,10 +175,10 @@ Legend: ✅ supported · ❌ not supported · ⚠️ supported with caveats
 | `Model.objects.union`               | ✅        |          |
 | `Model.objects.intersection`        | ✅        |          |
 | `Model.objects.difference`          | ✅        |          |
-| `Model.objects.select_related`      | ❌        |          |
+| `Model.objects.select_related`      | ✅        |          |
 | `Model.objects.select_for_update`   | ✅        |          |
 | `Model.objects.prefetch_related`    | ❌        |          |
-| `Model.objects.aaggregate`          | ❌        |          |
+| `Model.objects.aaggregate`          | ✅        |          |
 | `Model.objects.annotate`            | ✅        |          |
 | `Model.objects.order_by`            | ✅        |          |
 | `Model.objects.distinct`            | ✅        |          |
