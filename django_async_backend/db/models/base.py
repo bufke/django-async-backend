@@ -134,6 +134,7 @@ class AsyncModelMixin:
     async def async_refresh_from_db(
         self, using=None, fields=None, from_queryset=None
     ):
+
         if from_queryset is not None and not (
             isinstance(from_queryset, QuerySet)
             or issubclass(
