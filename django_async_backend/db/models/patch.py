@@ -10,6 +10,8 @@ It also routes many-to-many related managers built on an ``AsyncManager``,
 ``instance.<m2m>(manager="async_objects")``, to the async manager class.
 """
 
+from functools import cache
+
 from django.db.models.base import Model
 from django.db.models.fields import related_descriptors
 
@@ -32,9 +34,16 @@ _sync_create_forward_many_to_many_manager = (
 _patched = False
 
 
+@cache
+def _create_async_forward_many_to_many_manager(superclass, rel, reverse):
+    return async_related_descriptors.create_forward_many_to_many_manager(
+        superclass, rel, reverse
+    )
+
+
 def _create_forward_many_to_many_manager(superclass, rel, reverse):
     if issubclass(superclass, AsyncManager):
-        factory = async_related_descriptors.create_forward_many_to_many_manager
+        factory = _create_async_forward_many_to_many_manager
     else:
         factory = _sync_create_forward_many_to_many_manager
     return factory(superclass, rel, reverse)

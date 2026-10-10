@@ -9,6 +9,7 @@ from django.db import models
 from django.db.models import Value
 
 from django_async_backend.db.models.base import AsyncModelMixin
+from django_async_backend.db.models.manager import AsyncManager
 
 
 class AbstractBaseModel(AsyncModelMixin, models.Model):
@@ -263,8 +264,16 @@ class GenericRelationModel(AsyncModelMixin, models.Model):
         db_table = "generic_relation_model"
 
 
+class StartsWithDManager(AsyncManager):
+    def get_queryset(self):
+        return super().get_queryset().filter(name__startswith="d")
+
+
 class M2MTagModel(AsyncModelMixin, models.Model):
     name = models.CharField(max_length=255, unique=True)
+
+    objects = models.Manager()
+    d_objects = StartsWithDManager()
 
     class Meta:
         db_table = "m2m_tag_model"

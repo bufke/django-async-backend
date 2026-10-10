@@ -188,6 +188,12 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
         do_not_call_in_templates = True
 
         def _build_remove_filters(self, removed_vals):
+
+            if isinstance(removed_vals, QuerySet):
+                removed_vals = removed_vals.values(
+                    self.target_field.target_field.attname
+                )
+
             filters = Q.create([(self.source_field_name, self.related_val)])
             # No need to add a subquery condition if removed_vals is a QuerySet
             # without filters.

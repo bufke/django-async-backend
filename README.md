@@ -230,8 +230,8 @@ Not supported ❌
 
 Pass `manager="async_objects"` to a many-to-many accessor to get an async
 related manager: `article.tags(manager="async_objects")`. The plain accessor,
-`article.tags`, stays the sync ORM unless the model's default manager is an
-`AsyncManager`.
+`article.tags`, stays the sync ORM unless the related model's default manager
+is an `AsyncManager`.
 
 | methods                                   | supported | comments |
 | ----------------------------------------- | --------- | -------- |

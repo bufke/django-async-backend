@@ -118,6 +118,14 @@ module:
                     manager.__class__, rel, reverse
                 )
 
+        _build_remove_filters:
+          add_raw_top:
+            - |
+              if isinstance(removed_vals, QuerySet):
+                  removed_vals = removed_vals.values(
+                      self.target_field.target_field.attname
+                  )
+
         get_prefetch_querysets:
           remove: true
 
@@ -229,6 +237,9 @@ module:
           calls:
             - func:
                 name: tuple
+              args:
+                - func:
+                    name: objs
               replace_raw: |
                 (
                     [obj async for obj in objs]
@@ -237,6 +248,9 @@ module:
                 )
             - func:
                 name: set
+              args:
+                - func:
+                    attr: values_list
               replace_raw: |
                 {
                     val

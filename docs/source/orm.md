@@ -148,6 +148,11 @@ async for tag in tags.filter(name__startswith="d"):
     ...
 ```
 
+`aset()` takes instances, primary keys or an async queryset; a sync
+`Model.objects` queryset raises `SynchronousOnlyOperation`. Sync `m2m_changed`
+receivers run in a thread on the sync connection, outside the async
+transaction.
+
 ## Content types
 
 `django.contrib.contenttypes` is synchronous, and it gets reached implicitly:
@@ -289,8 +294,8 @@ Not supported ❌
 
 Pass `manager="async_objects"` to a many-to-many accessor to get an async
 related manager: `article.tags(manager="async_objects")`. The plain accessor,
-`article.tags`, stays the sync ORM unless the model's default manager is an
-`AsyncManager`.
+`article.tags`, stays the sync ORM unless the related model's default manager
+is an `AsyncManager`.
 
 | methods                                   | supported | comments |
 | ----------------------------------------- | --------- | -------- |

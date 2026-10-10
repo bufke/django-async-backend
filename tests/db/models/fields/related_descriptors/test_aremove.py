@@ -1,3 +1,4 @@
+from django.db.models import signals
 from test_app.models import (
     M2MMemberModel,
     M2MOwnerModel,
@@ -54,6 +55,13 @@ class TestARemove(RecordM2MChanged, AsyncioTestCase):
 
         self.assertEqual(await names(self.tags), ["django", "python"])
 
+    async def test_filtered_manager_removes_only_what_it_sees(self):
+        await self.owner.tags(manager="d_objects").aremove(
+            self.django, self.python
+        )
+
+        self.assertEqual(await names(self.tags), ["python"])
+
     async def test_sends_pre_and_post_remove(self):
         await self.tags.aremove(self.django)
 
@@ -64,6 +72,21 @@ class TestARemove(RecordM2MChanged, AsyncioTestCase):
                 ("post_remove", "owner", False, [self.django.pk]),
             ],
         )
+
+    async def test_async_receiver_is_awaited(self):
+        received = []
+
+        async def receiver(action, **kwargs):
+            received.append(action)
+
+        signals.m2m_changed.connect(receiver, sender=self.m2m_sender)
+        self.addCleanup(
+            signals.m2m_changed.disconnect, receiver, sender=self.m2m_sender
+        )
+
+        await self.tags.aremove(self.django)
+
+        self.assertEqual(received, ["pre_remove", "post_remove"])
 
 
 class TestARemoveSymmetrical(AsyncioTestCase):

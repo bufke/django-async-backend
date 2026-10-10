@@ -1,4 +1,7 @@
+import asyncio
+
 from django.db import models
+from django.db.models import signals
 from django.test.utils import isolate_apps
 from test_app.models import (
     M2MOwnerModel,
@@ -13,7 +16,10 @@ from django_async_backend.test import (
     AsyncioTestCase,
 )
 
-from .utils import names
+from .utils import (
+    RecordM2MChanged,
+    names,
+)
 
 
 class TestManyRelatedManager(AsyncioTestCase):
@@ -64,6 +70,20 @@ class TestManyRelatedManager(AsyncioTestCase):
         self.assertIsInstance(books, AsyncManager)
         self.assertFalse(hasattr(books, "add"))
 
+    async def test_is_the_generated_async_class(self):
+        tags = self.owner.tags(manager="async_objects")
+
+        self.assertEqual(
+            type(tags).__module__,
+            "django_async_backend.db.models.fields.related_descriptors",
+        )
+
+    async def test_async_class_is_built_once_per_relation(self):
+        first = self.owner.tags(manager="async_objects")
+        second = self.owner.tags(manager="async_objects")
+
+        self.assertIs(type(first), type(second))
+
     async def test_writes_run_on_the_async_connection(self):
         tags = self.owner.tags(manager="async_objects")
 
@@ -71,18 +91,61 @@ class TestManyRelatedManager(AsyncioTestCase):
             async_connections["default"]
         ) as ctx:
             await tags.aadd(self.django)
-            await tags.aset([])
+            await tags.aremove(self.django)
 
-        self.assertTrue(ctx.captured_queries)
-        self.assertEqual(await names(tags), [])
+        statements = [
+            query["sql"].split()[0] for query in ctx.captured_queries
+        ]
+        self.assertEqual(statements, ["INSERT", "DELETE"])
 
-    async def test_writes_join_the_surrounding_transaction(self):
-        tags = self.owner.tags(manager="async_objects")
 
+class TestManyRelatedManagerTransaction(RecordM2MChanged, AsyncioTestCase):
+    """Every write joins the surrounding async transaction, including the
+    paths that send m2m_changed, so a rollback undoes it."""
+
+    m2m_sender = M2MOwnerModel.tags.through
+
+    async def asyncSetUp(self):
+        self.owner = await M2MOwnerModel.async_objects.acreate(name="owner")
+        self.django = await M2MTagModel.async_objects.acreate(name="django")
+        self.python = await M2MTagModel.async_objects.acreate(name="python")
+        self.tags = self.owner.tags(manager="async_objects")
+        await self.tags.aadd(self.django)
+
+    async def assertRolledBack(self, write):
         with self.assertRaises(ZeroDivisionError):
             async with async_atomic():
-                await tags.aadd(self.django)
-                self.assertEqual(await names(tags), ["django"])
+                # A write that fell back to the sync connection would wait
+                # on this transaction's locks forever.
+                async with asyncio.timeout(5):
+                    await write()
                 1 / 0
 
-        self.assertEqual(await names(tags), [])
+        self.assertEqual(
+            await names(M2MTagModel.async_objects),
+            [
+                "django",
+                "python",
+            ],
+        )
+        self.assertEqual(await names(self.tags), ["django"])
+
+    async def test_aadd(self):
+        await self.assertRolledBack(lambda: self.tags.aadd(self.python))
+
+    async def test_aadd_without_signals(self):
+        signals.m2m_changed.disconnect(self.receiver, sender=self.m2m_sender)
+
+        await self.assertRolledBack(lambda: self.tags.aadd(self.python))
+
+    async def test_aremove(self):
+        await self.assertRolledBack(lambda: self.tags.aremove(self.django))
+
+    async def test_aclear(self):
+        await self.assertRolledBack(self.tags.aclear)
+
+    async def test_aset(self):
+        await self.assertRolledBack(lambda: self.tags.aset([self.python]))
+
+    async def test_acreate(self):
+        await self.assertRolledBack(lambda: self.tags.acreate(name="rust"))

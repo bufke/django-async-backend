@@ -1,3 +1,4 @@
+from django.db.models import signals
 from test_app.models import (
     M2MMemberModel,
     M2MOwnerModel,
@@ -51,6 +52,26 @@ class TestAClear(RecordM2MChanged, AsyncioTestCase):
         self.assertEqual(
             await names(self.other.tags(manager="async_objects")), []
         )
+
+    async def test_filtered_manager_clears_only_what_it_sees(self):
+        await self.owner.tags(manager="d_objects").aclear()
+
+        self.assertEqual(await names(self.tags), ["python"])
+
+    async def test_async_receiver_is_awaited(self):
+        received = []
+
+        async def receiver(action, **kwargs):
+            received.append(action)
+
+        signals.m2m_changed.connect(receiver, sender=self.m2m_sender)
+        self.addCleanup(
+            signals.m2m_changed.disconnect, receiver, sender=self.m2m_sender
+        )
+
+        await self.tags.aclear()
+
+        self.assertEqual(received, ["pre_clear", "post_clear"])
 
     async def test_sends_pre_and_post_clear(self):
         await self.tags.aclear()
