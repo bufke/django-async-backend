@@ -126,6 +126,28 @@ async def main():
     await async_connections[DEFAULT_DB_ALIAS].close()
 ```
 
+## Related managers
+
+Many-to-many accessors take Django's
+[`manager` argument](https://docs.djangoproject.com/en/stable/topics/db/queries/#using-a-custom-reverse-manager).
+With `manager="async_objects"` you get a related manager built on
+`AsyncManager`, so its queries and writes run on the async connection, inside
+any surrounding `async_atomic()` block:
+
+```python
+tags = article.tags(manager="async_objects")
+
+await tags.aadd(django, through_defaults={"weight": 1})
+await tags.aremove(python)
+await tags.aset([django, rust])
+await tags.aclear()
+
+tag = await tags.acreate(name="asyncio")
+
+async for tag in tags.filter(name__startswith="d"):
+    ...
+```
+
 ## Content types
 
 `django.contrib.contenttypes` is synchronous, and it gets reached implicitly:
@@ -158,11 +180,12 @@ transaction — it will not see uncommitted rows from a surrounding
 ```
 
 :::{warning}
-**There is no async related manager.** `instance.<related>.all()` is the sync
-ORM, even on a model using `AsyncModelMixin`. It opens a synchronous
-connection behind your back; a test teardown failing with *"database is being
-accessed by other users"* is the usual symptom of one leaking. Query the
-related model directly through its own `async_objects` manager instead:
+**The default related accessor is the sync ORM.** `instance.<related>.all()`
+opens a synchronous connection behind your back, even on a model using
+`AsyncModelMixin`; a test teardown failing with *"database is being accessed
+by other users"* is the usual symptom of one leaking. Ask a many-to-many
+accessor for its async manager, and query reverse foreign keys through the
+related model's own `async_objects`:
 
 ```python
 # not async — opens a sync connection
@@ -170,6 +193,9 @@ await sync_to_async(list)(author.book_set.all())
 
 # do this instead
 async for book in Book.async_objects.filter(author=author):
+    ...
+
+async for tag in article.tags(manager="async_objects").all():
     ...
 ```
 :::
@@ -261,8 +287,22 @@ Not supported ❌
 
 ### Related managers
 
-Not supported ❌ — `instance.<related>.all()` is the sync ORM. See
-[Pitfalls](#pitfalls).
+Pass `manager="async_objects"` to a many-to-many accessor to get an async
+related manager: `article.tags(manager="async_objects")`. The plain accessor,
+`article.tags`, stays the sync ORM unless the model's default manager is an
+`AsyncManager`.
+
+| methods                                   | supported | comments |
+| ----------------------------------------- | --------- | -------- |
+| many-to-many querying                     | ✅        |          |
+| many-to-many `aadd`                       | ✅        |          |
+| many-to-many `aremove`                    | ✅        |          |
+| many-to-many `aclear`                     | ✅        |          |
+| many-to-many `aset`                       | ✅        |          |
+| many-to-many `acreate`                    | ✅        |          |
+| many-to-many `aget_or_create`             | ✅        |          |
+| many-to-many `aupdate_or_create`          | ✅        |          |
+| reverse foreign key                       | ❌        |          |
 
 ### Databases
 

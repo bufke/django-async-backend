@@ -228,5 +228,19 @@ Not supported ❌
 
 ### Related managers
 
-Not supported ❌ — `instance.<related>.all()` is the sync ORM. See
-[Pitfalls](#pitfalls).
+Pass `manager="async_objects"` to a many-to-many accessor to get an async
+related manager: `article.tags(manager="async_objects")`. The plain accessor,
+`article.tags`, stays the sync ORM unless the model's default manager is an
+`AsyncManager`.
+
+| methods                                   | supported | comments |
+| ----------------------------------------- | --------- | -------- |
+| many-to-many querying                     | ✅        |          |
+| many-to-many `aadd`                       | ✅        |          |
+| many-to-many `aremove`                    | ✅        |          |
+| many-to-many `aclear`                     | ✅        |          |
+| many-to-many `aset`                       | ✅        |          |
+| many-to-many `acreate`                    | ✅        |          |
+| many-to-many `aget_or_create`             | ✅        |          |
+| many-to-many `aupdate_or_create`          | ✅        |          |
+| reverse foreign key                       | ❌        |          |
