@@ -148,6 +148,52 @@ await obj.async_save()
 It takes the same `using` and `for_concrete_model` arguments as
 `get_for_model()`, and creates the `ContentType` row if it is missing.
 
+## Related objects
+
+`instance.<related>` is the sync ORM, but Django's
+[custom reverse manager](https://docs.djangoproject.com/en/stable/topics/db/queries/#using-a-custom-reverse-manager)
+syntax builds the related manager from `async_objects` instead. Reads on a
+reverse foreign key or either side of a many-to-many then run on the async
+connection:
+
+```python
+async for book in author.book_set(manager="async_objects").filter(
+    name__startswith="Django"
+):
+    ...
+
+tag = await book.tags(manager="async_objects").order_by("name").afirst()
+```
+
+Books fetched through `author.book_set(...)` have the author cached, so
+`book.author` doesn't query. Elsewhere, an uncached `book.author` raises
+`SynchronousOnlyOperation`; use `select_related("author")` or
+`await Author.async_objects.aget(pk=book.author_id)`.
+
+### Writes
+
+The related manager's write methods (`aadd`, `aremove`, `aclear`, `aset`,
+`acreate`, ...) are Django's `sync_to_async` wrappers; don't call them. Some
+raise, but `aadd()` and `aremove()` run on a separate sync connection: outside
+a transaction they write behind your back, and inside `async_atomic()` they
+can't see its rows.
+
+Write the join rows through a `through=` model instead:
+
+```python
+class BookTag(AsyncModelMixin, models.Model):
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE)
+
+
+await BookTag(book=book, tag=tag).async_save()
+await BookTag.async_objects.filter(book=book, tag=tag).adelete()
+```
+
+The model Django creates for a plain `ManyToManyField` gets `async_objects`
+too, so `Book.tags.through.async_objects` works the same way. Neither sends
+`m2m_changed`.
+
 ## Pitfalls
 
 ```{danger}
@@ -162,7 +208,8 @@ transaction — it will not see uncommitted rows from a surrounding
 ORM, even on a model using `AsyncModelMixin`. It opens a synchronous
 connection behind your back; a test teardown failing with *"database is being
 accessed by other users"* is the usual symptom of one leaking. Query the
-related model directly through its own `async_objects` manager instead:
+related model directly through its own `async_objects` manager instead, or for
+reads pass `manager="async_objects"` (see [Related objects](#related-objects)):
 
 ```python
 # not async — opens a sync connection
@@ -170,6 +217,10 @@ await sync_to_async(list)(author.book_set.all())
 
 # do this instead
 async for book in Book.async_objects.filter(author=author):
+    ...
+
+# or, for reads
+async for book in author.book_set(manager="async_objects").all():
     ...
 ```
 :::
@@ -261,8 +312,11 @@ Not supported ❌
 
 ### Related managers
 
-Not supported ❌ — `instance.<related>.all()` is the sync ORM. See
-[Pitfalls](#pitfalls).
+| methods                                        | supported | comments                                              |
+| ---------------------------------------------- | --------- | ----------------------------------------------------- |
+| `instance.<related>(manager="async_objects")`  | ⚠️        | reads only, see [Related objects](#related-objects)   |
+| `instance.<related>.all()`                     | ❌        | sync ORM                                              |
+| `aadd`, `aremove`, `aclear`, `aset`, `acreate` | ❌        | don't call; `aadd`/`aremove` run on a sync connection |
 
 ### Databases
 

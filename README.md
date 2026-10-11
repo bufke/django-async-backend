@@ -228,5 +228,8 @@ Not supported ❌
 
 ### Related managers
 
-Not supported ❌ — `instance.<related>.all()` is the sync ORM. See
-[Pitfalls](#pitfalls).
+| methods                                        | supported | comments                                                                                                          |
+| ---------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `instance.<related>(manager="async_objects")`  | ⚠️        | reads only, see [Related objects](https://django-async-backend.readthedocs.io/en/latest/orm.html#related-objects) |
+| `instance.<related>.all()`                     | ❌        | sync ORM                                                                                                          |
+| `aadd`, `aremove`, `aclear`, `aset`, `acreate` | ❌        | don't call; `aadd`/`aremove` run on a sync connection                                                             |

@@ -611,3 +611,35 @@ class TotalOrderingChildModel(AsyncModelMixin, models.Model):
 
     class Meta:
         db_table = "total_ordering_child_model"
+
+
+class M2MMemberModel(AsyncModelMixin, models.Model):
+    """Many-to-many target reached through a model with an extra field,
+    and related to itself symmetrically."""
+
+    name = models.CharField(max_length=255, unique=True)
+    friends = models.ManyToManyField("self")
+
+    class Meta:
+        db_table = "m2m_member_model"
+
+
+class M2MGroupModel(AsyncModelMixin, models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    members = models.ManyToManyField(
+        M2MMemberModel,
+        through="M2MMembershipModel",
+        related_name="groups",
+    )
+
+    class Meta:
+        db_table = "m2m_group_model"
+
+
+class M2MMembershipModel(AsyncModelMixin, models.Model):
+    group = models.ForeignKey(M2MGroupModel, on_delete=models.CASCADE)
+    member = models.ForeignKey(M2MMemberModel, on_delete=models.CASCADE)
+    role = models.CharField(max_length=255, default="member")
+
+    class Meta:
+        db_table = "m2m_membership_model"
